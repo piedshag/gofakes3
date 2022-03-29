@@ -444,6 +444,18 @@ func (db *MultiBucketBackend) PutObject(
 	if err != nil {
 		return result, err
 	}
+	
+	size = stat.Size()
+	if size == 0 {
+		size = 0
+		if err := db.bucketFs.Remove(objectPath); err != nil {
+			return result, err
+		}
+
+		if err := db.bucketFs.MkdirAll(objectPath, db.dirMode); err != nil {
+			return result, err
+		}
+	}
 
 	storedMeta := &Metadata{
 		File:    objectPath,
