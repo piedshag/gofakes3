@@ -302,6 +302,10 @@ func (db *MultiBucketBackend) HeadObject(bucketName, objectName string) (*gofake
 	} else if err != nil {
 		return nil, err
 	}
+	
+	if stat.IsDir() && objectName[len(objectName)-1:] != "/" {
+		return nil, gofakes3.KeyNotFound(objectName)
+	}
 
 	size, mtime := stat.Size(), stat.ModTime()
 
