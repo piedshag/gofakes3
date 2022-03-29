@@ -142,6 +142,7 @@ func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefi
 		}
 
 		if entry.IsDir() {
+			mtime := entry.ModTime()
 			response.Add(&gofakes3.Content{
 				Key:          entry.Name() + "/",
 				LastModified: gofakes3.NewContentTime(mtime),
