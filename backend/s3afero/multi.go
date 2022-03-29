@@ -199,6 +199,9 @@ func (db *MultiBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, 
 		}
 
 		size := info.Size()
+		if info.IsDir() {
+			size = 0
+		}
 		mtime := info.ModTime()
 		meta, err := db.metaStore.loadMeta(bucket, objectName, size, mtime)
 		if err != nil {
