@@ -142,7 +142,12 @@ func (db *MultiBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefi
 		}
 
 		if entry.IsDir() {
-			response.AddPrefix(path.Join(prefixPath, prefixPart))
+			response.Add(&gofakes3.Content{
+				Key:          entry.Name() + "/",
+				LastModified: gofakes3.NewContentTime(mtime),
+				ETag:         `"d41d8cd98f00b204e9800998ecf8427e"`,
+				Size:         0,
+			})
 
 		} else {
 			size := entry.Size()
