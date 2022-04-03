@@ -443,9 +443,7 @@ func (db *MultiBucketBackend) PutObject(
 		return result, err
 	}
 	
-	size = stat.Size()
-	if size == 0 {
-		size = 0
+	if stat.Size() == 0 && meta["Content-Type"] == "application/x-directory" {
 		if err := db.bucketFs.Remove(objectPath); err != nil {
 			return result, err
 		}
