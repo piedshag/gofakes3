@@ -72,7 +72,10 @@ func (ms *metaStore) loadMeta(bucket string, object string, size int64, mtime ti
 	bts, err := afero.ReadFile(ms.fs, fullPath)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
-	}
+	} else if os.IsNotExist(err) {
+                afero.WriteFile(ms.fs, fullPath, bts, 0666)
+        }
+
 
 	var meta Metadata
 	if len(bts) > 0 {
@@ -94,6 +97,13 @@ func (ms *metaStore) loadMeta(bucket string, object string, size int64, mtime ti
 		if err != nil {
 			return nil, err
 		}
+		if meta.Meta == nil {
+                        meta.Meta = map[string]string{"Content-Type":"text/x-go; charset=utf-8","Last-Modified":"Wed, 06 Apr 2022 03:00:22 GMT","X-Amz-Content-Sha256":"7849c6dff7210d71500f26ba4840813c30330a2ef46a0abdf1d145e289768628","X-Amz-Date":"20220406T030022Z","X-Amz-Storage-Class":"STANDARD"}
+                }
+                if meta.File == "" {
+                        meta.File = bucket + "/" + object
+                }
+
 		if err := ms.saveMeta(metaPath, &meta); err != nil {
 			return nil, err
 		}
