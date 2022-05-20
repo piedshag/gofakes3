@@ -92,11 +92,11 @@ func (db *SingleBucketBackend) ListBuckets() ([]gofakes3.BucketInfo, error) {
 }
 
 func (db *SingleBucketBackend) ListBucket(bucket string, prefix *gofakes3.Prefix, page gofakes3.ListBucketPage) (*gofakes3.ObjectList, error) {
-	if bucket != db.name {
-		return nil, gofakes3.BucketNotFound(bucket)
-	}
 	if prefix == nil {
 		prefix = emptyPrefix
+	}
+	if err := gofakes3.ValidateBucketName(bucket); err != nil {
+		return nil, gofakes3.BucketNotFound(bucket)
 	}
 	if !page.IsEmpty() {
 		return nil, gofakes3.ErrInternalPageNotImplemented
@@ -114,8 +114,11 @@ func (db *SingleBucketBackend) ListBucket(bucket string, prefix *gofakes3.Prefix
 }
 
 func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, prefixPath, prefixPart string) (*gofakes3.ObjectList, error) {
-	dirEntries, err := afero.ReadDir(db.fs, filepath.FromSlash(prefixPath))
-	if err != nil {
+	bucketPath := path.Join(bucket, prefixPath)
+	dirEntries, err := afero.ReadDir(db.fs, filepath.FromSlash(bucketPath))
+	if os.IsNotExist(err) {
+		return nil, gofakes3.BucketNotFound(bucket)
+	} else if err != nil {
 		return nil, err
 	}
 
@@ -132,7 +135,13 @@ func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, pref
 		}
 
 		if entry.IsDir() {
-			response.AddPrefix(path.Join(prefixPath, prefixPart))
+			mtime := entry.ModTime()
+			response.Add(&gofakes3.Content{
+				Key:          entry.Name() + "/",
+				LastModified: gofakes3.NewContentTime(mtime),
+				ETag:         `"d41d8cd98f00b204e9800998ecf8427e"`,
+				Size:         0,
+			})
 
 		} else {
 			size := entry.Size()
@@ -156,6 +165,15 @@ func (db *SingleBucketBackend) getBucketWithFilePrefixLocked(bucket string, pref
 }
 
 func (db *SingleBucketBackend) getBucketWithArbitraryPrefixLocked(bucket string, prefix *gofakes3.Prefix) (*gofakes3.ObjectList, error) {
+	stat, err := db.fs.Stat(filepath.FromSlash(bucket))
+	if os.IsNotExist(err) {
+		return nil, gofakes3.BucketNotFound(bucket)
+	} else if err != nil {
+		return nil, err
+	} else if !stat.IsDir() {
+		return nil, fmt.Errorf("gofakes3: expected %q to be a bucket path", bucket)
+	}
+
 	response := gofakes3.NewObjectList()
 
 	if err := afero.Walk(db.fs, filepath.FromSlash(bucket), func(path string, info os.FileInfo, err error) error {
@@ -205,11 +223,17 @@ func (db *SingleBucketBackend) HeadObject(bucketName, objectName string) (*gofak
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	stat, err := db.fs.Stat(filepath.FromSlash(objectName))
+	fullPath := path.Join(bucketName, objectName)
+
+	stat, err := db.fs.Stat(filepath.FromSlash(fullPath))
 	if os.IsNotExist(err) {
 		return nil, gofakes3.KeyNotFound(objectName)
 	} else if err != nil {
 		return nil, err
+	}
+
+	if stat.IsDir() && objectName[len(objectName)-1:] != "/" {
+		return nil, gofakes3.KeyNotFound(objectName)
 	}
 
 	size, mtime := stat.Size(), stat.ModTime()
@@ -236,7 +260,9 @@ func (db *SingleBucketBackend) GetObject(bucketName, objectName string, rangeReq
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	f, err := db.fs.Open(filepath.FromSlash(objectName))
+	fullPath := path.Join(bucketName, objectName)
+
+	f, err := db.fs.Open(filepath.FromSlash(fullPath))
 	if os.IsNotExist(err) {
 		return nil, gofakes3.KeyNotFound(objectName)
 	} else if err != nil {
@@ -298,7 +324,8 @@ func (db *SingleBucketBackend) PutObject(
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	objectFilePath := filepath.FromSlash(objectName)
+	objectPath := path.Join(bucketName, objectName)
+	objectFilePath := filepath.FromSlash(objectPath)
 	objectDir := filepath.Dir(objectFilePath)
 
 	if objectDir != "." {
@@ -338,6 +365,16 @@ func (db *SingleBucketBackend) PutObject(
 	stat, err := db.fs.Stat(objectFilePath)
 	if err != nil {
 		return result, err
+	}
+
+	if stat.Size() == 0 && meta["Content-Type"] == "application/x-directory" {
+		if err := db.fs.Remove(objectFilePath); err != nil {
+			return result, err
+		}
+
+		if err := db.fs.MkdirAll(objectFilePath, 0777); err != nil {
+			return result, err
+		}
 	}
 
 	storedMeta := &Metadata{
@@ -394,7 +431,8 @@ func (db *SingleBucketBackend) DeleteObject(bucketName, objectName string) (resu
 func (db *SingleBucketBackend) deleteObjectLocked(bucketName, objectName string) error {
 	// S3 does not report an error when attemping to delete a key that does not exist, so
 	// we need to skip IsNotExist errors.
-	if err := db.fs.Remove(filepath.FromSlash(objectName)); err != nil && !os.IsNotExist(err) {
+	fullPath := path.Join(bucketName, objectName)
+	if err := db.fs.Remove(filepath.FromSlash(fullPath)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	if err := db.metaStore.deleteMeta(db.metaStore.metaPath(bucketName, objectName)); err != nil {
